@@ -1,0 +1,2 @@
+# duitku
+gabut aja
