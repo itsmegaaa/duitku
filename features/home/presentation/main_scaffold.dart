@@ -5,7 +5,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/presentation/components/glass_container.dart';
 import '../../../core/presentation/components/bounce_button.dart';
 import '../../../core/presentation/components/pulse_fab.dart';
-import '../../transactions/presentation/transaction_bottom_sheet.dart';
+
 
 class MainScaffold extends StatelessWidget {
   final Widget child;
@@ -73,7 +73,7 @@ class MainScaffold extends StatelessWidget {
             child: Align(
               alignment: Alignment.bottomCenter,
               child: PulseFAB(
-                onTap: () => TransactionBottomSheet.show(context),
+                onTap: () => context.push('/add-transaction'),
               ),
             ),
           ),

@@ -9,14 +9,22 @@ class CategoryRepository {
   CategoryRepository(this._dbService);
   
   Future<List<CategoryModel>> getCategories(String profileId) async {
-    final db = await _dbService.database;
-    final res = await db.query('categories', where: 'profileId = ?', whereArgs: [profileId]);
-    return res.map((e) => CategoryModel.fromMap(e)).toList();
+    try {
+      final db = await _dbService.database;
+      final res = await db.query('categories', where: 'profileId = ?', whereArgs: [profileId]);
+      return res.map((e) => CategoryModel.fromMap(e)).toList();
+    } catch (e) {
+      throw Exception('Gagal memuat kategori: $e');
+    }
   }
 
   Future<void> addCategory(CategoryModel category) async {
-    final db = await _dbService.database;
-    await db.insert('categories', category.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    try {
+      final db = await _dbService.database;
+      await db.insert('categories', category.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    } catch (e) {
+      throw Exception('Gagal menambahkan kategori: $e');
+    }
   }
 }
 

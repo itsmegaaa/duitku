@@ -15,6 +15,7 @@ import '../../features/auth/presentation/register_screen.dart';
 import '../../features/auth/presentation/pin_setup_screen.dart';
 import '../../features/auth/presentation/pin_lock_screen.dart';
 import '../../features/auth/presentation/forgot_pin_screen.dart';
+import '../../features/transactions/presentation/add_transaction_screen.dart';
 
 import '../database/hive_service.dart';
 
@@ -168,6 +169,14 @@ GoRouter appRouter(Ref ref) {
             ),
           ),
         ],
+      ),
+      GoRoute(
+        path: '/add-transaction',
+        pageBuilder: (context, state) => _buildPageWithTransition(
+          context: context,
+          state: state,
+          child: const AddTransactionScreen(),
+        ),
       ),
     ],
   );

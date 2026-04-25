@@ -65,18 +65,20 @@ class _PinLockScreenState extends State<PinLockScreen>
     }
   }
 
+  // ✅ BUG 1 DIPERBAIKI: Menggunakan AuthenticationOptions
   Future<void> _promptBiometrics() async {
     try {
       final authenticated = await _localAuth.authenticate(
         localizedReason: 'Gunakan biometrik untuk membuka DuitKu',
-        biometricOnly: true,
         persistAcrossBackgrounding: true,
+        biometricOnly: false, // false agar fallback ke device credential
       );
       if (authenticated && mounted) {
         context.go('/');
       }
-    } catch (e) {
-      debugPrint('Auth err: $e');
+    } on PlatformException catch (e) {
+      debugPrint('Biometric error: ${e.code} - ${e.message}');
+      // Optional: Handle spesifik error jika diperlukan, misalnya auth_error.notEnrolled
     }
   }
 

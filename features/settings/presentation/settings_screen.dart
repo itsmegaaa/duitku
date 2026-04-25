@@ -1,32 +1,35 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/database/hive_service.dart';
+import '../../../core/database/database_service.dart';
 import '../../../core/presentation/components/glass_container.dart';
 import '../../../core/presentation/components/bounce_button.dart';
-import '../../../core/services/export_service.dart';
+import '../../../core/presentation/components/shimmer_widget.dart';
 import '../../../core/services/notification_service.dart';
 import '../../../core/services/firestore_sync_service.dart';
+import '../../auth/domain/profile_model.dart';
+import '../application/settings_provider.dart';
+import '../../home/application/home_provider.dart';
 
-class SettingsScreen extends StatefulWidget {
+// ✅ Tambahan import untuk fitur Export (Bagian 5d)
+import '../application/export_service.dart';
+import '../../transactions/data/transaction_repository.dart';
+import '../../transactions/domain/transaction_model.dart';
+
+class SettingsScreen extends ConsumerStatefulWidget {
   const SettingsScreen({super.key});
 
   @override
-  State<SettingsScreen> createState() => _SettingsScreenState();
+  ConsumerState<SettingsScreen> createState() => _SettingsScreenState();
 }
 
-class _SettingsScreenState extends State<SettingsScreen> {
+class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _reminderEnabled = false;
   TimeOfDay _reminderTime = const TimeOfDay(hour: 20, minute: 0);
-  int _activeProfileIndex = 0;
-
-  // Dummy profiles for Multi-Profil (Bagian 10)
-  final List<Map<String, dynamic>> _profiles = [
-    {'name': 'Budi Santoso', 'avatar': Icons.person, 'balance': 12500000},
-    {'name': 'Siti Aisyah', 'avatar': Icons.person_2, 'balance': 8300000},
-    {'name': 'Anak', 'avatar': Icons.child_care, 'balance': 500000},
-  ];
 
   @override
   void initState() {
@@ -44,6 +47,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
+  void _switchProfile(String profileId) async {
+    await HiveService.setActiveProfileId(profileId);
+
+    ref.invalidate(activeProfileProvider);
+    ref.invalidate(homeSummaryProvider);
+    ref.invalidate(recentTransactionsProvider);
+
+    if (mounted) context.go('/');
+  }
+
+  Future<void> _seedDefaultCategories(String profileId) async {
+    final db = await DatabaseService().database;
+    final defaults = [
+      {'name': 'Makanan & Minuman', 'icon': '🍔', 'colorValue': 0xFFFF7043},
+      {'name': 'Transportasi', 'icon': '🚗', 'colorValue': 0xFF42A5F5},
+      {'name': 'Belanja', 'icon': '🛍️', 'colorValue': 0xFFEC407A},
+      {'name': 'Tagihan', 'icon': '🧾', 'colorValue': 0xFF78909C},
+      {'name': 'Hiburan', 'icon': '🎮', 'colorValue': 0xFFAB47BC},
+      {'name': 'Kesehatan', 'icon': '💊', 'colorValue': 0xFF26A69A},
+      {'name': 'Gaji', 'icon': '💼', 'colorValue': 0xFFC9A84C},
+      {'name': 'Investasi', 'icon': '📈', 'colorValue': 0xFF66BB6A},
+    ];
+    for (final cat in defaults) {
+      await db.insert('categories', {
+        'id': const Uuid().v4(),
+        'profileId': profileId,
+        'name': cat['name'],
+        'icon': cat['icon'],
+        'colorValue': cat['colorValue'],
+        'isDefault': 1,
+      });
+    }
+  }
+
+  void _addProfile(String name) async {
+    final newProfile = ProfileModel(
+      id: const Uuid().v4(),
+      name: name,
+      email: '',
+      currency: 'IDR',
+    );
+    final db = await DatabaseService().database;
+    await db.insert('profiles', newProfile.toMap());
+    await _seedDefaultCategories(newProfile.id);
+    ref.invalidate(allProfilesProvider);
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -52,41 +102,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
           physics: const BouncingScrollPhysics(),
           padding: const EdgeInsets.all(24),
           children: [
-            // Header
-            Text('Profil & Pengaturan', style: AppTextStyles.heading.copyWith(fontSize: 24)),
+            Text(
+              'Profil & Pengaturan',
+              style: AppTextStyles.heading.copyWith(fontSize: 24),
+            ),
             const SizedBox(height: 24),
 
-            // ── Bagian 10: Multi Profil ─────────────────────
             _buildSectionTitle('Profil Aktif'),
             const SizedBox(height: 12),
             _buildProfileSelector(),
             const SizedBox(height: 32),
 
-            // ── Bagian 9: Export Data ────────────────────────
             _buildSectionTitle('Export Data'),
             const SizedBox(height: 12),
             _buildExportSection(),
             const SizedBox(height: 32),
 
-            // ── Bagian 12: Notifikasi ───────────────────────
             _buildSectionTitle('Notifikasi'),
             const SizedBox(height: 12),
             _buildNotificationSection(),
             const SizedBox(height: 32),
 
-            // ── Bagian 11: Data & Sync ──────────────────────
             _buildSectionTitle('Data & Sinkronisasi'),
             const SizedBox(height: 12),
             _buildDataSection(),
             const SizedBox(height: 32),
 
-            // ── Keamanan ────────────────────────────────────
             _buildSectionTitle('Keamanan'),
             const SizedBox(height: 12),
             _buildSecuritySection(),
             const SizedBox(height: 32),
 
-            // ── Logout ──────────────────────────────────────
             BounceButton(
               onTap: () async {
                 await HiveService.setAuthenticated(false);
@@ -98,74 +144,134 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 decoration: BoxDecoration(
                   color: AppColors.danger.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.danger.withValues(alpha: 0.3)),
+                  border: Border.all(
+                    color: AppColors.danger.withValues(alpha: 0.3),
+                  ),
                 ),
                 alignment: Alignment.center,
-                child: Text('Keluar dari Akun', style: AppTextStyles.buttonLabel.copyWith(color: AppColors.danger)),
+                child: Text(
+                  'Keluar dari Akun',
+                  style: AppTextStyles.buttonLabel.copyWith(
+                    color: AppColors.danger,
+                  ),
+                ),
               ),
             ),
-            const SizedBox(height: 100), // navbar spacing
+            const SizedBox(height: 100),
           ],
         ),
       ),
     );
   }
 
-  // ─── Section Title ─────────────────────────────────────
   Widget _buildSectionTitle(String title) {
     return Text(title, style: AppTextStyles.heading.copyWith(fontSize: 16));
   }
 
-  // ─── Multi Profil (Bagian 10) ──────────────────────────
   Widget _buildProfileSelector() {
+    final profilesAsync = ref.watch(allProfilesProvider);
+    final activeId = HiveService.activeProfileId;
+
     return GlassContainer(
       padding: const EdgeInsets.all(16),
       child: Column(
         children: [
-          ...List.generate(_profiles.length, (index) {
-            final profile = _profiles[index];
-            final isActive = _activeProfileIndex == index;
-            return GestureDetector(
-              onTap: () => setState(() => _activeProfileIndex = index),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                margin: EdgeInsets.only(bottom: index < _profiles.length - 1 ? 12 : 0),
-                padding: const EdgeInsets.all(14),
-                decoration: BoxDecoration(
-                  color: isActive ? AppColors.primary.withValues(alpha: 0.1) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: isActive ? AppColors.primary : AppColors.inputBorder,
-                    width: isActive ? 2 : 1,
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    CircleAvatar(
-                      radius: 22,
-                      backgroundColor: isActive ? AppColors.primary : AppColors.surface,
-                      child: Icon(profile['avatar'] as IconData, color: isActive ? AppColors.background : AppColors.textSecondary),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+          profilesAsync.when(
+            data: (profiles) {
+              if (profiles.isEmpty) {
+                return const Padding(
+                  padding: EdgeInsets.all(8.0),
+                  child: Text('Belum ada profil'),
+                );
+              }
+              return Column(
+                children: List.generate(profiles.length, (index) {
+                  final item = profiles[index];
+                  final profile = item.profile;
+                  final isActive = activeId == profile.id;
+
+                  return GestureDetector(
+                    onTap: () => _switchProfile(profile.id),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      margin: EdgeInsets.only(
+                        bottom: index < profiles.length - 1 ? 12 : 0,
+                      ),
+                      padding: const EdgeInsets.all(14),
+                      decoration: BoxDecoration(
+                        color: isActive
+                            ? AppColors.primary.withValues(alpha: 0.1)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: isActive
+                              ? AppColors.primary
+                              : AppColors.inputBorder,
+                          width: isActive ? 2 : 1,
+                        ),
+                      ),
+                      child: Row(
                         children: [
-                          Text(profile['name'] as String, style: AppTextStyles.body.copyWith(fontWeight: FontWeight.w600)),
-                          Text(
-                            'Saldo: Rp ${_formatCompact(profile['balance'] as int)}',
-                            style: AppTextStyles.caption,
+                          CircleAvatar(
+                            radius: 22,
+                            backgroundColor: isActive
+                                ? AppColors.primary
+                                : AppColors.surface,
+                            child: Icon(
+                              Icons.person,
+                              color: isActive
+                                  ? AppColors.background
+                                  : AppColors.textSecondary,
+                            ),
                           ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  profile.name,
+                                  style: AppTextStyles.body.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                Text(
+                                  'Saldo: Rp ${_formatCompact(item.balance.toInt())}',
+                                  style: AppTextStyles.caption,
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (isActive)
+                            const Icon(
+                              Icons.check_circle,
+                              color: AppColors.primary,
+                              size: 20,
+                            ),
                         ],
                       ),
                     ),
-                    if (isActive)
-                      const Icon(Icons.check_circle, color: AppColors.primary, size: 20),
-                  ],
+                  );
+                }),
+              );
+            },
+            loading: () => const Column(
+              children: [
+                ShimmerWidget(
+                  width: double.infinity,
+                  height: 70,
+                  borderRadius: 12,
                 ),
-              ),
-            );
-          }),
+                SizedBox(height: 12),
+                ShimmerWidget(
+                  width: double.infinity,
+                  height: 70,
+                  borderRadius: 12,
+                ),
+              ],
+            ),
+            error: (_, _) => const Text('Gagal memuat profil'),
+          ),
           const SizedBox(height: 12),
           BounceButton(
             onTap: () => _showAddProfileDialog(),
@@ -174,7 +280,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
               padding: const EdgeInsets.symmetric(vertical: 12),
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.primary.withValues(alpha: 0.5), style: BorderStyle.solid),
+                border: Border.all(
+                  color: AppColors.primary.withValues(alpha: 0.5),
+                  style: BorderStyle.solid,
+                ),
               ),
               alignment: Alignment.center,
               child: Row(
@@ -182,7 +291,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   const Icon(Icons.add, color: AppColors.primary, size: 18),
                   const SizedBox(width: 8),
-                  Text('Tambah Profil', style: AppTextStyles.body.copyWith(color: AppColors.primary)),
+                  Text(
+                    'Tambah Profil',
+                    style: AppTextStyles.body.copyWith(
+                      color: AppColors.primary,
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -204,30 +318,45 @@ class _SettingsScreenState extends State<SettingsScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Tambah Profil Baru', style: AppTextStyles.heading, textAlign: TextAlign.center),
+              Text(
+                'Tambah Profil Baru',
+                style: AppTextStyles.heading,
+                textAlign: TextAlign.center,
+              ),
               const SizedBox(height: 24),
               TextField(
                 controller: nameCtl,
                 style: const TextStyle(color: AppColors.textMain),
-                decoration: const InputDecoration(hintText: 'Nama Profil', prefixIcon: Icon(Icons.person_add)),
+                decoration: const InputDecoration(
+                  hintText: 'Nama Profil',
+                  prefixIcon: Icon(Icons.person_add, color: AppColors.primary),
+                ),
               ),
               const SizedBox(height: 20),
               Container(
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(12),
-                  gradient: const LinearGradient(colors: [AppColors.primary, AppColors.primaryLight]),
+                  gradient: const LinearGradient(
+                    colors: [AppColors.primary, AppColors.primaryLight],
+                  ),
                 ),
                 child: ElevatedButton(
                   onPressed: () {
                     if (nameCtl.text.isNotEmpty) {
-                      setState(() {
-                        _profiles.add({'name': nameCtl.text, 'avatar': Icons.person, 'balance': 0});
-                      });
-                      Navigator.pop(ctx);
+                      _addProfile(nameCtl.text);
+                      if (context.mounted) Navigator.pop(ctx);
                     }
                   },
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.transparent, shadowColor: Colors.transparent),
-                  child: Text('Simpan', style: AppTextStyles.buttonLabel.copyWith(color: AppColors.background)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.transparent,
+                    shadowColor: Colors.transparent,
+                  ),
+                  child: Text(
+                    'Simpan',
+                    style: AppTextStyles.buttonLabel.copyWith(
+                      color: AppColors.background,
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -237,7 +366,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ─── Export Section (Bagian 9) ──────────────────────────
   Widget _buildExportSection() {
     return GlassContainer(
       padding: const EdgeInsets.all(16),
@@ -272,13 +400,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Pilih Scope Export', style: AppTextStyles.heading, textAlign: TextAlign.center),
+              Text(
+                'Pilih Scope Export',
+                style: AppTextStyles.heading,
+                textAlign: TextAlign.center,
+              ),
               const SizedBox(height: 24),
-              _buildScopeTile('Bulan Ini', Icons.calendar_today, () => _doExport(type, 'Bulan Ini', ctx)),
+              _buildScopeTile(
+                'Bulan Ini',
+                Icons.calendar_today,
+                () => _doExport(type, 'Bulan Ini', ctx),
+              ),
               const SizedBox(height: 8),
-              _buildScopeTile('Per Kategori', Icons.category, () => _doExport(type, 'Per Kategori', ctx)),
+              _buildScopeTile(
+                'Per Kategori',
+                Icons.category,
+                () => _doExport(type, 'Per Kategori', ctx),
+              ),
               const SizedBox(height: 8),
-              _buildScopeTile('Semua Data', Icons.storage, () => _doExport(type, 'Semua Data', ctx)),
+              _buildScopeTile(
+                'Semua Data',
+                Icons.storage,
+                () => _doExport(type, 'Semua Data', ctx),
+              ),
             ],
           ),
         ),
@@ -309,21 +453,68 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // ✅ BAGIAN 5d DIPERBAIKI: Sambungan Ke Data Transaksi Nyata
   Future<void> _doExport(String type, String scope, BuildContext ctx) async {
     Navigator.pop(ctx);
-    if (type == 'pdf') {
-      await ExportService.exportPdf(context, scope: scope);
-    } else {
-      final path = await ExportService.exportCsv();
+    final profileId = HiveService.activeProfileId;
+    if (profileId == null) return;
+
+    try {
+      final repo = ref.read(transactionRepositoryProvider);
+      List<TransactionModel> transactions = await repo.getTransactions(
+        profileId,
+      );
+
+      // Filter berdasarkan scope
+      final now = DateTime.now();
+      if (scope == 'Bulan Ini') {
+        transactions = transactions
+            .where((t) => t.date.month == now.month && t.date.year == now.year)
+            .toList();
+      } else if (scope == 'Per Kategori') {
+        transactions.sort((a, b) => a.categoryId.compareTo(b.categoryId));
+      } else {
+        // Semua Data, default urut berdasarkan tanggal terbaru
+        transactions.sort((a, b) => b.date.compareTo(a.date));
+      }
+
+      if (transactions.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Tidak ada data transaksi untuk di-export.'),
+            ),
+          );
+        }
+        return;
+      }
+
+      if (type == 'pdf') {
+        await ExportService.exportToPdf(transactions);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Berhasil export ke PDF!')),
+          );
+        }
+      } else {
+        await ExportService.exportToCsv(transactions);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Berhasil export ke CSV! Cek folder dokumen Anda.'),
+            ),
+          );
+        }
+      }
+    } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('CSV tersimpan di: $path')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Gagal export data: $e')));
       }
     }
   }
 
-  // ─── Notification Section (Bagian 12) ──────────────────
   Widget _buildNotificationSection() {
     return GlassContainer(
       padding: const EdgeInsets.all(16),
@@ -331,14 +522,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Row(
             children: [
-              const Icon(Icons.notifications_outlined, color: AppColors.primary, size: 22),
+              const Icon(
+                Icons.notifications_outlined,
+                color: AppColors.primary,
+                size: 22,
+              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Pengingat Harian', style: AppTextStyles.body.copyWith(fontWeight: FontWeight.w600)),
-                    Text('Notifikasi untuk mencatat pengeluaran', style: AppTextStyles.caption),
+                    Text(
+                      'Pengingat Harian',
+                      style: AppTextStyles.body.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      'Notifikasi untuk mencatat pengeluaran',
+                      style: AppTextStyles.caption,
+                    ),
                   ],
                 ),
               ),
@@ -369,7 +572,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   builder: (context, child) {
                     return Theme(
                       data: Theme.of(context).copyWith(
-                        colorScheme: const ColorScheme.dark(primary: AppColors.primary, surface: AppColors.surface),
+                        colorScheme: const ColorScheme.dark(
+                          primary: AppColors.primary,
+                          surface: AppColors.surface,
+                        ),
                       ),
                       child: child!,
                     );
@@ -384,7 +590,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 }
               },
               child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 12,
+                  horizontal: 16,
+                ),
                 decoration: BoxDecoration(
                   color: AppColors.surface,
                   borderRadius: BorderRadius.circular(12),
@@ -392,11 +601,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 ),
                 child: Row(
                   children: [
-                    const Icon(Icons.access_time, color: AppColors.primary, size: 20),
+                    const Icon(
+                      Icons.access_time,
+                      color: AppColors.primary,
+                      size: 20,
+                    ),
                     const SizedBox(width: 12),
-                    Text('Jam pengingat: ${_reminderTime.format(context)}', style: AppTextStyles.body),
+                    Text(
+                      'Jam pengingat: ${_reminderTime.format(context)}',
+                      style: AppTextStyles.body,
+                    ),
                     const Spacer(),
-                    const Icon(Icons.edit, color: AppColors.textSecondary, size: 16),
+                    const Icon(
+                      Icons.edit,
+                      color: AppColors.textSecondary,
+                      size: 16,
+                    ),
                   ],
                 ),
               ),
@@ -407,7 +627,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ─── Data Section (Bagian 11) ──────────────────────────
   Widget _buildDataSection() {
     return GlassContainer(
       padding: const EdgeInsets.all(16),
@@ -431,7 +650,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.storage,
             title: 'Penyimpanan Lokal',
             subtitle: 'Data tersimpan offline via Hive',
-            trailing: Text('Aktif', style: AppTextStyles.caption.copyWith(color: AppColors.success)),
+            trailing: Text(
+              'Aktif',
+              style: AppTextStyles.caption.copyWith(color: AppColors.success),
+            ),
           ),
           _divider(),
           _buildSettingsTile(
@@ -444,13 +666,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 context: context,
                 builder: (ctx) => AlertDialog(
                   backgroundColor: AppColors.surface,
-                  title: Text('Hapus Semua Data?', style: AppTextStyles.heading),
-                  content: Text('Tindakan ini tidak bisa dibatalkan.', style: AppTextStyles.body),
+                  title: Text(
+                    'Hapus Semua Data?',
+                    style: AppTextStyles.heading,
+                  ),
+                  content: Text(
+                    'Tindakan ini tidak bisa dibatalkan.',
+                    style: AppTextStyles.body,
+                  ),
                   actions: [
-                    TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Batal')),
                     TextButton(
                       onPressed: () => Navigator.pop(ctx),
-                      child: Text('Hapus', style: TextStyle(color: AppColors.danger)),
+                      child: const Text('Batal'),
+                    ),
+                    TextButton(
+                      onPressed: () async {
+                        final messenger = ScaffoldMessenger.of(context);
+                        final navigator = Navigator.of(context);
+                        final db = await DatabaseService().database;
+                        await db.delete('transactions');
+                        await db.delete('budgets');
+                        await db.delete('categories');
+                        ref.invalidate(allProfilesProvider);
+                        if (mounted) {
+                          navigator.pop();
+                          messenger.showSnackBar(
+                            const SnackBar(
+                              content: Text('Data berhasil dihapus'),
+                            ),
+                          );
+                        }
+                      },
+                      child: const Text(
+                        'Hapus',
+                        style: TextStyle(color: AppColors.danger),
+                      ),
                     ),
                   ],
                 ),
@@ -462,7 +712,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ─── Security Section ──────────────────────────────────
   Widget _buildSecuritySection() {
     return GlassContainer(
       padding: const EdgeInsets.all(16),
@@ -493,7 +742,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // ─── Shared Helpers ────────────────────────────────────
   Widget _buildSettingsTile({
     required IconData icon,
     required String title,
@@ -515,19 +763,31 @@ class _SettingsScreenState extends State<SettingsScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(title, style: AppTextStyles.body.copyWith(fontWeight: FontWeight.w600, color: titleColor)),
+                  Text(
+                    title,
+                    style: AppTextStyles.body.copyWith(
+                      fontWeight: FontWeight.w600,
+                      color: titleColor,
+                    ),
+                  ),
                   Text(subtitle, style: AppTextStyles.caption),
                 ],
               ),
             ),
-            trailing ?? const Icon(Icons.chevron_right, color: AppColors.textSecondary, size: 20),
+            trailing ??
+                const Icon(
+                  Icons.chevron_right,
+                  color: AppColors.textSecondary,
+                  size: 20,
+                ),
           ],
         ),
       ),
     );
   }
 
-  Widget _divider() => Divider(color: AppColors.inputBorder.withValues(alpha: 0.5), height: 16);
+  Widget _divider() =>
+      Divider(color: AppColors.inputBorder.withValues(alpha: 0.5), height: 16);
 
   String _formatCompact(int value) {
     if (value >= 1000000) return '${(value / 1000000).toStringAsFixed(1)}M';

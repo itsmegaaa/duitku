@@ -5,7 +5,7 @@ class TransactionModel {
   final double amount;
   final String type; // 'income' or 'expense'
   final DateTime date;
-  final String note;
+  final String? note;
   final String? receiptUrl;
   final bool isRecurring;
   final DateTime createdAt;
@@ -18,7 +18,7 @@ class TransactionModel {
     required this.amount,
     required this.type,
     required this.date,
-    required this.note,
+    this.note,
     this.receiptUrl,
     required this.isRecurring,
     required this.createdAt,
@@ -49,7 +49,7 @@ class TransactionModel {
       amount: (map['amount'] as num).toDouble(),
       type: map['type'] as String,
       date: DateTime.parse(map['date'] as String),
-      note: map['note'] as String,
+      note: map['note'] as String?,
       receiptUrl: map['receiptUrl'] as String?,
       isRecurring: (map['isRecurring'] as int) == 1,
       createdAt: DateTime.parse(map['createdAt'] as String),

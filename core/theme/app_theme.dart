@@ -139,4 +139,9 @@ class AppTheme {
       ),
     );
   }
+  static const LinearGradient primaryGradient = LinearGradient(
+    colors: [AppColors.primary, AppColors.primaryLight],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
 }

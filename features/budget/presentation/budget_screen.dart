@@ -1,35 +1,189 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../../../core/presentation/components/glass_container.dart';
 import '../../../core/presentation/components/bounce_button.dart';
 import '../../../core/presentation/components/animated_counter.dart';
+import '../../../core/presentation/components/shimmer_widget.dart';
+import '../../../core/database/hive_service.dart';
+import '../../../core/database/database_service.dart';
+import '../../transactions/domain/category_model.dart';
+import '../application/budget_provider.dart';
+import '../domain/budget_model.dart';
 
-class BudgetScreen extends StatefulWidget {
+class BudgetScreen extends ConsumerStatefulWidget {
   const BudgetScreen({super.key});
 
   @override
-  State<BudgetScreen> createState() => _BudgetScreenState();
+  ConsumerState<BudgetScreen> createState() => _BudgetScreenState();
 }
 
-class _BudgetScreenState extends State<BudgetScreen> {
-  // Dummy budget data
-  static final List<Map<String, dynamic>> _budgets = [
-    {'icon': Icons.fastfood, 'label': 'Makanan', 'color': const Color(0xFFFF7043), 'limit': 2000000, 'spent': 1750000},
-    {'icon': Icons.directions_car, 'label': 'Transport', 'color': const Color(0xFF42A5F5), 'limit': 1000000, 'spent': 450000},
-    {'icon': Icons.shopping_bag, 'label': 'Belanja', 'color': const Color(0xFFEC407A), 'limit': 1500000, 'spent': 1400000},
-    {'icon': Icons.receipt_long, 'label': 'Tagihan', 'color': const Color(0xFF78909C), 'limit': 800000, 'spent': 800000},
-    {'icon': Icons.sports_esports, 'label': 'Hiburan', 'color': const Color(0xFFAB47BC), 'limit': 500000, 'spent': 200000},
-    {'icon': Icons.local_hospital, 'label': 'Kesehatan', 'color': const Color(0xFF26A69A), 'limit': 300000, 'spent': 50000},
-  ];
+class _BudgetScreenState extends ConsumerState<BudgetScreen> {
+  // BAGIAN 4b: Fungsi Simpan Budget Nyata
+  void _saveBudget(String categoryId, double limit) async {
+    final profileId = HiveService.activeProfileId;
+    if (profileId == null) return;
 
-  double get _totalLimit => _budgets.fold(0, (sum, b) => sum + (b['limit'] as int));
-  double get _totalSpent => _budgets.fold(0, (sum, b) => sum + (b['spent'] as int));
+    final now = DateTime.now();
+    final budget = BudgetModel(
+      id: const Uuid().v4(),
+      profileId: profileId,
+      categoryId: categoryId,
+      amountLimit: limit,
+      month: now.month,
+      year: now.year,
+    );
+
+    // Menyimpan ke database lokal (SQLite)
+    final db = await DatabaseService().database;
+    await db.insert('budgets', budget.toMap());
+
+    // Sinkronisasi ke Firestore (Jika FirebaseSyncService sudah ada)
+    // await FirestoreSyncService.syncBudget(budget.toMap());
+
+    // Refresh UI
+    ref.invalidate(budgetsWithSpendingProvider);
+  }
+
+  void _showAddBudgetDialog() async {
+    // 1. Ambil daftar kategori dari database untuk Dropdown
+    final db = await DatabaseService().database;
+    final profileId = HiveService.activeProfileId;
+    final catRes = await db.query(
+      'categories',
+      where: 'profileId = ? OR profileId IS NULL',
+      whereArgs: [profileId],
+    );
+    final categories = catRes.map((e) => CategoryModel.fromMap(e)).toList();
+
+    if (!mounted) return;
+
+    CategoryModel? selectedCategory;
+    final limitController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) {
+          return Dialog(
+            backgroundColor: Colors.transparent,
+            child: GlassContainer(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    'Tambah Budget',
+                    style: AppTextStyles.heading,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Dropdown Kategori
+                  DropdownButtonFormField<CategoryModel>(
+                    dropdownColor: AppColors.surface,
+                    style: const TextStyle(color: AppColors.textMain),
+                    decoration: InputDecoration(
+                      hintText: 'Pilih Kategori',
+                      prefixIcon: const Icon(
+                        Icons.category,
+                        color: AppColors.primary,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(
+                          color: AppColors.inputBorder,
+                        ),
+                      ),
+                    ),
+                    items: categories.map((cat) {
+                      return DropdownMenuItem(
+                        value: cat,
+                        child: Text('${cat.icon} ${cat.name}'),
+                      );
+                    }).toList(),
+                    onChanged: (val) => setState(() => selectedCategory = val),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // Input Limit
+                  TextField(
+                    controller: limitController,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(color: AppColors.textMain),
+                    decoration: InputDecoration(
+                      hintText: 'Limit per Bulan (Rp)',
+                      prefixIcon: const Icon(
+                        Icons.monetization_on_outlined,
+                        color: AppColors.primary,
+                      ),
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        borderSide: const BorderSide(
+                          color: AppColors.inputBorder,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+
+                  // Tombol Simpan
+                  Container(
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      gradient: const LinearGradient(
+                        colors: [AppColors.primary, AppColors.primaryLight],
+                      ),
+                    ),
+                    child: ElevatedButton(
+                      onPressed: () {
+                        if (selectedCategory != null &&
+                            limitController.text.isNotEmpty) {
+                          final limit =
+                              double.tryParse(limitController.text) ?? 0;
+                          _saveBudget(selectedCategory!.id, limit);
+                          Navigator.pop(context);
+                        }
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.transparent,
+                        shadowColor: Colors.transparent,
+                      ),
+                      child: Text(
+                        'Simpan',
+                        style: AppTextStyles.buttonLabel.copyWith(
+                          color: AppColors.background,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final formatter = NumberFormat.currency(locale: 'id_ID', symbol: 'Rp ', decimalDigits: 0);
+    final formatter = NumberFormat.currency(
+      locale: 'id_ID',
+      symbol: 'Rp ',
+      decimalDigits: 0,
+    );
+    final budgetsAsync = ref.watch(budgetsWithSpendingProvider);
 
     return Scaffold(
       body: SafeArea(
@@ -46,7 +200,10 @@ class _BudgetScreenState extends State<BudgetScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('Budget Bulanan', style: AppTextStyles.heading.copyWith(fontSize: 24)),
+                        Text(
+                          'Budget Bulanan',
+                          style: AppTextStyles.heading.copyWith(fontSize: 24),
+                        ),
                         BounceButton(
                           onTap: _showAddBudgetDialog,
                           child: Container(
@@ -54,17 +211,43 @@ class _BudgetScreenState extends State<BudgetScreen> {
                             decoration: BoxDecoration(
                               color: AppColors.primary.withValues(alpha: 0.15),
                               borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+                              border: Border.all(
+                                color: AppColors.primary.withValues(alpha: 0.3),
+                              ),
                             ),
-                            child: const Icon(Icons.add, color: AppColors.primary, size: 20),
+                            child: const Icon(
+                              Icons.add,
+                              color: AppColors.primary,
+                              size: 20,
+                            ),
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 24),
 
-                    // Overview Card
-                    _buildOverviewCard(formatter),
+                    // Overview Card Dynamic
+                    budgetsAsync.when(
+                      data: (budgets) {
+                        double totalLimit = 0;
+                        double totalSpent = 0;
+                        for (var b in budgets) {
+                          totalLimit += b.budget.amountLimit;
+                          totalSpent += b.spent;
+                        }
+                        return _buildOverviewCard(
+                          totalLimit,
+                          totalSpent,
+                          formatter,
+                        );
+                      },
+                      loading: () => const ShimmerWidget(
+                        width: double.infinity,
+                        height: 180,
+                        borderRadius: 16,
+                      ),
+                      error: (_, _) => const SizedBox(),
+                    ),
                     const SizedBox(height: 24),
 
                     // Section Title
@@ -75,54 +258,104 @@ class _BudgetScreenState extends State<BudgetScreen> {
               ),
             ),
 
-            // Budget Cards
-            SliverList(
-              delegate: SliverChildBuilderDelegate(
-                (context, index) {
-                  final budget = _budgets[index];
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 12, left: 24, right: 24),
-                    child: _BudgetCard(
-                      icon: budget['icon'] as IconData,
-                      label: budget['label'] as String,
-                      color: budget['color'] as Color,
-                      limit: (budget['limit'] as int).toDouble(),
-                      spent: (budget['spent'] as int).toDouble(),
-                      formatter: formatter,
+            // Budget Cards Dynamic
+            budgetsAsync.when(
+              data: (budgets) {
+                if (budgets.isEmpty) {
+                  return SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32.0),
+                      child: Center(
+                        child: Text(
+                          'Belum ada budget untuk bulan ini.',
+                          style: AppTextStyles.caption,
+                        ),
+                      ),
                     ),
                   );
-                },
-                childCount: _budgets.length,
+                }
+
+                return SliverList(
+                  delegate: SliverChildBuilderDelegate((context, index) {
+                    final item = budgets[index];
+                    return Padding(
+                      padding: const EdgeInsets.only(
+                        bottom: 12,
+                        left: 24,
+                        right: 24,
+                      ),
+                      child: _BudgetCard(item: item, formatter: formatter),
+                    );
+                  }, childCount: budgets.length),
+                );
+              },
+              loading: () => SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24),
+                  child: Column(
+                    children: List.generate(
+                      3,
+                      (index) => const Padding(
+                        padding: EdgeInsets.only(bottom: 12),
+                        child: ShimmerWidget(
+                          width: double.infinity,
+                          height: 90,
+                          borderRadius: 16,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              error: (_, _) => SliverToBoxAdapter(
+                child: Center(
+                  child: Text(
+                    'Gagal memuat budget',
+                    style: AppTextStyles.caption.copyWith(
+                      color: AppColors.danger,
+                    ),
+                  ),
+                ),
               ),
             ),
-            const SliverToBoxAdapter(child: SizedBox(height: 100)), // navbar spacing
+            const SliverToBoxAdapter(
+              child: SizedBox(height: 100),
+            ), // navbar spacing
           ],
         ),
       ),
     );
   }
 
-  Widget _buildOverviewCard(NumberFormat formatter) {
-    final percentage = _totalSpent / _totalLimit;
+  Widget _buildOverviewCard(
+    double totalLimit,
+    double totalSpent,
+    NumberFormat formatter,
+  ) {
+    final percentage = totalLimit > 0 ? (totalSpent / totalLimit) : 0.0;
+
     return GlassContainer(
       padding: const EdgeInsets.all(24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Total Budget Terpakai', style: AppTextStyles.caption.copyWith(fontSize: 14)),
+          Text(
+            'Total Budget Terpakai',
+            style: AppTextStyles.caption.copyWith(fontSize: 14),
+          ),
           const SizedBox(height: 8),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               AnimatedCounter(
-                value: _totalSpent,
+                value: totalSpent.toDouble(),
                 style: AppTextStyles.display.copyWith(fontSize: 28),
               ),
               const SizedBox(width: 8),
               Padding(
                 padding: const EdgeInsets.only(bottom: 4),
                 child: Text(
-                  '/ ${formatter.format(_totalLimit)}',
+                  '/ ${formatter.format(totalLimit)}',
                   style: AppTextStyles.caption.copyWith(fontSize: 14),
                 ),
               ),
@@ -158,57 +391,6 @@ class _BudgetScreenState extends State<BudgetScreen> {
     );
   }
 
-  void _showAddBudgetDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: GlassContainer(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('Tambah Budget', style: AppTextStyles.heading, textAlign: TextAlign.center),
-              const SizedBox(height: 24),
-              TextField(
-                style: const TextStyle(color: AppColors.textMain),
-                decoration: const InputDecoration(
-                  hintText: 'Nama Kategori',
-                  prefixIcon: Icon(Icons.category),
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: AppColors.textMain),
-                decoration: const InputDecoration(
-                  hintText: 'Limit per Bulan (Rp)',
-                  prefixIcon: Icon(Icons.monetization_on_outlined),
-                ),
-              ),
-              const SizedBox(height: 24),
-              Container(
-                decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(12),
-                  gradient: const LinearGradient(colors: [AppColors.primary, AppColors.primaryLight]),
-                ),
-                child: ElevatedButton(
-                  onPressed: () => Navigator.pop(context),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.transparent,
-                    shadowColor: Colors.transparent,
-                  ),
-                  child: Text('Simpan', style: AppTextStyles.buttonLabel.copyWith(color: AppColors.background)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   static Color _getProgressColor(double percentage) {
     if (percentage >= 0.9) return AppColors.danger;
     if (percentage >= 0.7) return const Color(0xFFFF9800); // orange
@@ -218,27 +400,17 @@ class _BudgetScreenState extends State<BudgetScreen> {
 
 // ─── Individual Budget Card ──────────────────────────────
 class _BudgetCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final double limit;
-  final double spent;
+  final BudgetWithSpending item;
   final NumberFormat formatter;
 
-  const _BudgetCard({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.limit,
-    required this.spent,
-    required this.formatter,
-  });
+  const _BudgetCard({required this.item, required this.formatter});
 
   @override
   Widget build(BuildContext context) {
-    final percentage = (spent / limit).clamp(0.0, 1.0);
-    final isOverBudget = spent >= limit;
+    final percentage = item.percentage.clamp(0.0, 1.0);
+    final isOverBudget = item.isOverBudget;
     final progressColor = _BudgetScreenState._getProgressColor(percentage);
+    final categoryColor = Color(item.category.colorValue);
 
     return GlassContainer(
       padding: const EdgeInsets.all(16),
@@ -249,17 +421,26 @@ class _BudgetCard extends StatelessWidget {
             children: [
               CircleAvatar(
                 radius: 20,
-                backgroundColor: color.withValues(alpha: 0.15),
-                child: Icon(icon, color: color, size: 20),
+                backgroundColor: categoryColor.withValues(alpha: 0.15),
+                // Gunakan emoji dari database
+                child: Text(
+                  item.category.icon,
+                  style: const TextStyle(fontSize: 18),
+                ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(label, style: AppTextStyles.body.copyWith(fontWeight: FontWeight.w600)),
                     Text(
-                      '${formatter.format(spent)} / ${formatter.format(limit)}',
+                      item.category.name,
+                      style: AppTextStyles.body.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Text(
+                      '${formatter.format(item.spent)} / ${formatter.format(item.budget.amountLimit)}',
                       style: AppTextStyles.caption,
                     ),
                   ],
@@ -267,11 +448,16 @@ class _BudgetCard extends StatelessWidget {
               ),
               // Percentage badge
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: progressColor.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: progressColor.withValues(alpha: 0.4)),
+                  border: Border.all(
+                    color: progressColor.withValues(alpha: 0.4),
+                  ),
                 ),
                 child: Text(
                   '${(percentage * 100).toInt()}%',
@@ -309,11 +495,18 @@ class _BudgetCard extends StatelessWidget {
             const SizedBox(height: 8),
             Row(
               children: [
-                const Icon(Icons.warning_amber_rounded, color: AppColors.danger, size: 16),
+                const Icon(
+                  Icons.warning_amber_rounded,
+                  color: AppColors.danger,
+                  size: 16,
+                ),
                 const SizedBox(width: 4),
                 Text(
                   'Budget sudah terlampaui!',
-                  style: AppTextStyles.caption.copyWith(color: AppColors.danger, fontWeight: FontWeight.w600),
+                  style: AppTextStyles.caption.copyWith(
+                    color: AppColors.danger,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ],
             ),

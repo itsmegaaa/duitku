@@ -7,23 +7,17 @@ import 'core/theme/theme_provider.dart';
 import 'core/database/hive_service.dart';
 import 'core/services/notification_service.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:google_sign_in/google_sign_in.dart';
-import 'firebase_options.dart';
+import 'firebase_options.dart'; // import google_sign_in.dart tidak dibutuhkan lagi di sini jika tidak dipanggil
 import 'package:intl/date_symbol_data_local.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   // init Hive & Session
   await HiveService.init();
 
   // init Firebase
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-
-  // init Google Sign-In
-  await GoogleSignIn.instance.initialize();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
 
   // init Notifications
   await NotificationService.init();
@@ -31,11 +25,7 @@ void main() async {
   // init intl Locale
   await initializeDateFormatting('id_ID', null);
 
-  runApp(
-    const ProviderScope(
-      child: DuitKuApp(),
-    ),
-  );
+  runApp(const ProviderScope(child: DuitKuApp()));
 }
 
 class DuitKuApp extends ConsumerWidget {

@@ -60,4 +60,3 @@ abstract class _$ThemeModeNotifier extends $Notifier<ThemeMode> {
     element.handleCreate(ref, build);
   }
 }
-
